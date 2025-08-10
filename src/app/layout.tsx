@@ -1,7 +1,8 @@
-import type {Metadata} from 'next';
-import {Inter, Dancing_Script} from 'next/font/google';
+import type { Metadata } from 'next';
+import { Inter, Dancing_Script } from 'next/font/google';
 import './globals.css';
-import {Toaster} from '@/components/ui/toaster';
+import { Toaster } from '@/components/ui/toaster';
+import Head from 'next/head';
 
 export const metadata: Metadata = {
   title: 'Torre de Oração',
@@ -31,6 +32,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR" className={`${inter.variable} ${dancingScript.variable}`}>
+      <Head>
+        <link rel="manifest" href="/manifest.json" />
+        {/* Aqui você pode adicionar outras tags de meta, ícones, etc */}
+      </Head>
       <body className="font-sans antialiased">
         {children}
         <Toaster />
