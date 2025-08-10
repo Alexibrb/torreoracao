@@ -7,6 +7,9 @@ export const metadata: Metadata = {
   title: 'Torre de Oração',
   description:
     'App para agendamento da torre de oração, onde os membros podem escolher horários para orar.',
+  icons: {
+    icon: 'https://www.ibrnobrasil.com.br/files/2018/10/logoigrejapng.png',
+  },
 };
 
 const inter = Inter({
