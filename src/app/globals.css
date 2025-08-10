@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 67% 94%; /* light Lavender */
+    --foreground: 278 100% 15%; /* Darker purple for text */
+    --card: 240 60% 98%; /* Lighter lavender for cards */
+    --card-foreground: 278 100% 15%;
+    --popover: 240 60% 98%;
+    --popover-foreground: 278 100% 15%;
+    --primary: 278 100% 25%; /* Deep Purple */
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 30% 90%;
+    --secondary-foreground: 278 100% 25%;
+    --muted: 240 30% 90%;
+    --muted-foreground: 278 100% 35%;
+    --accent: 51 100% 50%; /* Gold */
+    --accent-foreground: 278 100% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 20% 85%;
+    --input: 240 20% 88%;
+    --ring: 278 100% 35%;
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 278 20% 10%;
+    --foreground: 0 0% 98%;
+    --card: 278 20% 12%;
+    --card-foreground: 0 0% 98%;
+    --popover: 278 20% 10%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 51 100% 50%; /* Gold */
+    --primary-foreground: 278 100% 10%;
+    --secondary: 278 15% 20%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 278 15% 20%;
+    --muted-foreground: 0 0% 63.9%;
+    --accent: 278 100% 25%; /* Deep Purple */
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 278 15% 25%;
+    --input: 278 15% 25%;
+    --ring: 51 100% 60%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
