@@ -4,16 +4,20 @@ import { getFirestore } from "firebase/firestore";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyBiozkLSXDcyFia2V_C9APIex1juIkh7aA",
-  authDomain: "torredeoracao-aa401.firebaseapp.com",
-  projectId: "torredeoracao-aa401",
-  storageBucket: "torredeoracao-aa401.firebasestorage.app",
-  messagingSenderId: "940785041822",
-  appId: "1:940785041822:web:2a3909eef5490d503f168f"
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
 
 // Initialize Firebase
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+const db = getFirestore(app);
+
+export { app, db };rebase
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 
