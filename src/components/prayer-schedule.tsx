@@ -7,7 +7,7 @@ import { Calendar as CalendarIcon, Clock, HelpingHand, User, Lock, Trash2, Loade
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { doc, onSnapshot, setDoc, deleteDoc, getDoc } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, deleteDoc, getDoc, writeBatch } from "firebase/firestore";
 
 
 import { Button } from '@/components/ui/button';
@@ -141,8 +141,11 @@ export function PrayerSchedule() {
         // Reset to default state if no document exists for this date
         setIsScheduleDefined(false);
         setSlots([]);
-        setStartTime(6);
-        setEndTime(18);
+        // Keep admin-defined start/end time if they are editing, otherwise reset
+        if (!isAdminMode) {
+          setStartTime(6);
+          setEndTime(18);
+        }
         setWhatsAppSent(false);
       }
       setIsLoading(false);
@@ -177,13 +180,12 @@ export function PrayerSchedule() {
 
 
     return () => unsubscribe();
-  }, [todayDocId, toast]);
+  }, [todayDocId, toast, isAdminMode]);
 
-  const updateScheduleInFirestore = useCallback(async (dataToUpdate: Partial<ScheduleData>) => {
+  const updateScheduleInFirestore = useCallback(async (dataToUpdate: ScheduleData) => {
       const docRef = doc(db, FIRESTORE_COLLECTION, todayDocId);
       try {
-        // Use setDoc with merge: true to create or update the document
-        await setDoc(docRef, dataToUpdate, { merge: true });
+        await setDoc(docRef, dataToUpdate);
       } catch (error) {
           console.error("Failed to save state to Firestore", error);
           toast({
@@ -203,20 +205,22 @@ export function PrayerSchedule() {
       });
       return;
     }
-    const whatsAppDocRef = doc(db, FIRESTORE_COLLECTION, WHATSAPP_CONFIG_DOC);
-    const adminDocRef = doc(db, FIRESTORE_COLLECTION, ADMIN_CONFIG_DOC);
     
     try {
-      // Save WhatsApp number
-      await setDoc(whatsAppDocRef, { number: newNumber });
+      const batch = writeBatch(db);
       
-      // Generate and save new password
+      const whatsAppDocRef = doc(db, FIRESTORE_COLLECTION, WHATSAPP_CONFIG_DOC);
+      batch.set(whatsAppDocRef, { number: newNumber });
+      
       const newPassword = `ibrb${newNumber.slice(-4)}`;
-      await setDoc(adminDocRef, { password: newPassword });
+      const adminDocRef = doc(db, FIRESTORE_COLLECTION, ADMIN_CONFIG_DOC);
+      batch.set(adminDocRef, { password: newPassword });
       
-      // Update state locally AFTER successful save
+      await batch.commit();
+      
       setWhatsAppNumber(newNumber);
       setAdminPassword(newPassword);
+      setWhatsAppNumberInput(newNumber);
 
       toast({
           title: "Configuração Salva!",
@@ -264,7 +268,7 @@ export function PrayerSchedule() {
   const bookedSlots = useMemo(() => (slots || []).filter((s) => s.isBooked).sort((a, b) => a.time.localeCompare(b.time)), [slots]);
   const allSlotsBooked = useMemo(() => isScheduleDefined && (slots || []).length > 0 && (slots || []).every((s) => s.isBooked), [slots, isScheduleDefined]);
 
-  const handleSendToWhatsApp = useCallback(() => {
+  const handleSendToWhatsApp = useCallback(async () => {
     if (!scheduleDate || bookedSlots.length === 0) return;
     const dateToFormat = new Date(scheduleDate);
     if (isNaN(dateToFormat.getTime())) {
@@ -279,20 +283,23 @@ export function PrayerSchedule() {
         });
         return;
     }
-    const scheduleText = `*Escala da Torre de Oração para o dia ${format(dateToFormat, 'PPP', { locale: ptBR })}*\n\n${bookedSlots
+    const scheduleText = `*Escala da Torre de Oração para o dia: ${format(dateToFormat, 'PPP', { locale: ptBR })}*\n\n${bookedSlots
       .map((s) => `*${s.time}*: ${s.bookedBy}`)
       .join('\n')}\n\nObrigado a todos pela participação!`;
     const encodedMessage = encodeURIComponent(scheduleText);
     const whatsappUrl = `https://wa.me/${whatsAppNumber}?text=${encodedMessage}`;
     window.open(whatsappUrl, '_blank');
-  }, [scheduleDate, bookedSlots, whatsAppNumber, toast]);
+    
+    const docRef = doc(db, FIRESTORE_COLLECTION, todayDocId);
+    await setDoc(docRef, { whatsAppSent: true }, { merge: true });
+
+  }, [scheduleDate, bookedSlots, whatsAppNumber, toast, todayDocId]);
 
   useEffect(() => {
     if (allSlotsBooked && !whatsAppSent) {
       handleSendToWhatsApp();
-      updateScheduleInFirestore({ whatsAppSent: true });
     }
-  }, [allSlotsBooked, whatsAppSent, handleSendToWhatsApp, updateScheduleInFirestore]);
+  }, [allSlotsBooked, whatsAppSent, handleSendToWhatsApp]);
 
   const handleSelectSlot = (slot: Slot) => {
     if (!slot.isBooked) {
@@ -308,12 +315,22 @@ export function PrayerSchedule() {
     setIsEditingDialogOpen(true);
   };
 
-  const handleBookingSubmit = (values: z.infer<typeof bookingFormSchema>) => {
+  const handleBookingSubmit = async (values: z.infer<typeof bookingFormSchema>) => {
     if (selectedSlot) {
       const updatedSlots = slots.map((s) =>
         s.time === selectedSlot.time ? { ...s, isBooked: true, bookedBy: values.name } : s
       );
-      updateScheduleInFirestore({ slots: updatedSlots });
+      
+      const updatedData: ScheduleData = {
+        slots: updatedSlots,
+        isScheduleDefined,
+        startTime,
+        endTime,
+        whatsAppSent,
+      };
+
+      await updateScheduleInFirestore(updatedData);
+      
       setIsBookingDialogOpen(false);
       setSelectedSlot(null);
       toast({
@@ -324,12 +341,22 @@ export function PrayerSchedule() {
     }
   };
   
-  const handleEditBookingSubmit = (values: z.infer<typeof editBookingFormSchema>) => {
+  const handleEditBookingSubmit = async (values: z.infer<typeof editBookingFormSchema>) => {
     if (editingSlot) {
       const updatedSlots = slots.map((s) =>
         s.time === editingSlot.time ? { ...s, isBooked: true, bookedBy: values.name } : s
       );
-      updateScheduleInFirestore({ slots: updatedSlots });
+
+      const updatedData: ScheduleData = {
+        slots: updatedSlots,
+        isScheduleDefined,
+        startTime,
+        endTime,
+        whatsAppSent,
+      };
+      
+      await updateScheduleInFirestore(updatedData);
+
       toast({
         title: 'Agendamento Atualizado!',
         description: `O horário de ${editingSlot.time} foi atualizado para ${values.name}.`,
@@ -339,11 +366,18 @@ export function PrayerSchedule() {
     }
   };
   
-  const handleFreeSlot = (slotToFree: Slot) => {
+  const handleFreeSlot = async (slotToFree: Slot) => {
     const updatedSlots = slots.map((s) =>
       s.time === slotToFree.time ? { ...s, isBooked: false, bookedBy: null } : s
     );
-     updateScheduleInFirestore({ slots: updatedSlots });
+    const updatedData: ScheduleData = {
+      slots: updatedSlots,
+      isScheduleDefined,
+      startTime,
+      endTime,
+      whatsAppSent,
+    };
+     await updateScheduleInFirestore(updatedData);
      toast({
        title: 'Horário Liberado!',
        description: `O horário ${slotToFree.time} está disponível novamente.`,
@@ -365,7 +399,7 @@ export function PrayerSchedule() {
     }
   };
 
-  const handleAdminConfigSubmit = () => {
+  const handleAdminConfigSubmit = async () => {
     const currentScheduleDate = scheduleDate ? new Date(scheduleDate) : new Date();
     if (isNaN(currentScheduleDate.getTime())) {
       toast({ title: "Data inválida.", description: "Por favor, selecione uma data válida.", variant: "destructive" });
@@ -376,7 +410,6 @@ export function PrayerSchedule() {
       return;
     }
     
-    // Generate the new slots based on the current state of startTime and endTime
     const newSlots = generateTimeSlots(startTime, endTime, slots);
     
     const newScheduleData: ScheduleData = {
@@ -387,10 +420,8 @@ export function PrayerSchedule() {
       whatsAppSent: false,
     };
 
-    // Save to Firestore
-    updateScheduleInFirestore(newScheduleData);
+    await updateScheduleInFirestore(newScheduleData);
     
-    // Also update the local state immediately for instant UI feedback
     setSlots(newSlots);
     setStartTime(startTime);
     setEndTime(endTime);
@@ -408,7 +439,6 @@ export function PrayerSchedule() {
     try {
         await deleteDoc(docRef);
         setIsDeleteDialogOpen(false);
-        // The onSnapshot listener will automatically update the state to reflect deletion
         toast({
             title: "Escala Excluída",
             description: "A escala de oração foi removida com sucesso.",
@@ -694,7 +724,7 @@ service cloud.firestore {
   if (!isScheduleDefined) {
     return (
         <div className="space-y-4 text-center">
-            <Alert variant="destructive" className="shadow-lg bg-destructive text-white [&>svg]:text-white">
+             <Alert variant="destructive" className="shadow-lg bg-destructive text-white [&>svg]:text-white">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Aviso</AlertTitle>
                 <AlertDescription>
