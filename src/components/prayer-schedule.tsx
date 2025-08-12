@@ -219,7 +219,7 @@ export function PrayerSchedule() {
       await batch.commit();
       
       setWhatsAppNumber(newNumber);
-      setAdminPassword(newPassword); // FIX: Update admin password in state
+      setAdminPassword(newPassword);
       setWhatsAppNumberInput(newNumber);
 
       toast({
@@ -237,30 +237,20 @@ export function PrayerSchedule() {
   };
 
 
-  const generateTimeSlots = useCallback((start: number, end: number, existingSlots: Slot[] = []): Slot[] => {
+  const generateTimeSlots = useCallback((start: number, end: number): Slot[] => {
     const newSlots: Slot[] = [];
     if (end <= start) return [];
   
-    const bookedSlotsMap = new Map(
-      existingSlots.filter(s => s.isBooked).map(s => [s.time, s])
-    );
-  
     for (let i = start; i < end; i++) {
-        const startTimeStr = `${String(i).padStart(2, '0')}h`;
-        const endTimeStr = `${String(i + 1).padStart(2, '0')}h`;
-        const time = `${startTimeStr} - ${endTimeStr}`;
+      const startTimeStr = `${String(i).padStart(2, '0')}h`;
+      const endTimeStr = `${String(i + 1).padStart(2, '0')}h`;
+      const time = `${startTimeStr} - ${endTimeStr}`;
   
-      const existingBooking = bookedSlotsMap.get(time);
-  
-      if (existingBooking) {
-        newSlots.push(existingBooking);
-      } else {
-        newSlots.push({
-          time: time,
-          isBooked: false,
-          bookedBy: null,
-        });
-      }
+      newSlots.push({
+        time: time,
+        isBooked: false,
+        bookedBy: null,
+      });
     }
     return newSlots;
   }, []);
@@ -410,7 +400,7 @@ export function PrayerSchedule() {
       return;
     }
     
-    const newSlots = generateTimeSlots(startTime, endTime, slots);
+    const newSlots = generateTimeSlots(startTime, endTime);
     
     const newScheduleData: ScheduleData = {
       slots: newSlots,
