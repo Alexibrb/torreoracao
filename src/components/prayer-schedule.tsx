@@ -49,7 +49,7 @@ import { Label } from '@/components/ui/label';
 import { WhatsappIcon } from '@/components/icons';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import Link from 'next/link';
-import { db } from '@/lib/firebase';
+import { db, firebaseApp } from '@/lib/firebase';
 
 const FIRESTORE_COLLECTION = "torredeoracao";
 const WHATSAPP_CONFIG_DOC = "whatsappConfig";
