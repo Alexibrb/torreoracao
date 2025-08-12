@@ -14,11 +14,7 @@ const firebaseConfig = {
 
 
 // Initialize Firebase
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-const db = getFirestore(app);
+const firebaseApp = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+const db = getFirestore(firebaseApp);
 
-export { app, db };rebase
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-const db = getFirestore(app);
-
-export { app, db };
+export { firebaseApp, db };
