@@ -279,7 +279,7 @@ export function PrayerSchedule() {
         });
         return;
     }
-    const scheduleText = `*Escala de Oração - ${format(dateToFormat, 'PPP', { locale: ptBR })}*\n\n${bookedSlots
+    const scheduleText = `*Escala da Torre de Oração para o dia ${format(dateToFormat, 'PPP', { locale: ptBR })}*\n\n${bookedSlots
       .map((s) => `*${s.time}*: ${s.bookedBy}`)
       .join('\n')}\n\nObrigado a todos pela participação!`;
     const encodedMessage = encodeURIComponent(scheduleText);
