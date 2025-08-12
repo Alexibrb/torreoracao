@@ -685,7 +685,7 @@ service cloud.firestore {
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Aviso</AlertTitle>
                 <AlertDescription>
-                    A escala para o dia de hoje ainda não foi definida. Por favor, volte mais tarde.
+                    A escala para a Torre de Oração ainda não foi definida. Por favor, volte mais tarde.
                 </AlertDescription>
             </Alert>
             <Link href="https://www.ibrnobrasil.com.br" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
