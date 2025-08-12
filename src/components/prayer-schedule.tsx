@@ -219,7 +219,7 @@ export function PrayerSchedule() {
       await batch.commit();
       
       setWhatsAppNumber(newNumber);
-      setAdminPassword(newPassword);
+      setAdminPassword(newPassword); // FIX: Update admin password in state
       setWhatsAppNumberInput(newNumber);
 
       toast({
@@ -724,7 +724,7 @@ service cloud.firestore {
   if (!isScheduleDefined) {
     return (
         <div className="space-y-4 text-center">
-             <Alert variant="destructive" className="shadow-lg bg-destructive text-white [&>svg]:text-white">
+            <Alert variant="destructive" className="shadow-lg bg-destructive text-white [&>svg]:text-white">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Aviso</AlertTitle>
                 <AlertDescription>
