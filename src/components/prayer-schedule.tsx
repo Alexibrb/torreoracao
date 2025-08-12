@@ -274,7 +274,7 @@ export function PrayerSchedule() {
         });
         return;
     }
-    const scheduleText = `*Escala de Oração - ${format(dateToFormat, 'PPP', { locale: ptBR })}*\n\n${bookedSlots
+    const scheduleText = `*Escala da Torre de Oração - ${format(dateToFormat, 'PPP', { locale: ptBR })}*\n\n${bookedSlots
       .map((s) => `*${s.time}*: ${s.bookedBy}`)
       .join('\n')}\n\nObrigado a todos pela participação!`;
     const encodedMessage = encodeURIComponent(scheduleText);
@@ -690,7 +690,7 @@ service cloud.firestore {
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Aviso</AlertTitle>
                 <AlertDescription>
-                    A escala para o dia de hoje ainda não foi definida. Por favor, volte mais tarde.
+                    A escala da Torre de Oração ainda não foi definida. Por favor, volte mais tarde.
                 </AlertDescription>
             </Alert>
             <Link href="https://www.ibrnobrasil.com.br" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
