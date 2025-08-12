@@ -93,6 +93,7 @@ export function PrayerSchedule() {
   const [endTime, setEndTime] = useState(18);
   const [whatsAppSent, setWhatsAppSent] = useState(false);
   const [whatsAppNumber, setWhatsAppNumber] = useState('');
+  const [whatsAppNumberInput, setWhatsAppNumberInput] = useState('');
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [editingSlot, setEditingSlot] = useState<Slot | null>(null);
@@ -160,7 +161,9 @@ export function PrayerSchedule() {
     const whatsAppDocRef = doc(db, FIRESTORE_COLLECTION, WHATSAPP_CONFIG_DOC);
     getDoc(whatsAppDocRef).then((docSnap) => {
         if(docSnap.exists() && docSnap.data().number) {
-            setWhatsAppNumber(docSnap.data().number);
+            const number = docSnap.data().number;
+            setWhatsAppNumber(number);
+            setWhatsAppNumberInput(number);
         }
     }).catch(err => console.error("Error fetching whatsapp config", err));
 
@@ -206,12 +209,14 @@ export function PrayerSchedule() {
     try {
       // Save WhatsApp number
       await setDoc(whatsAppDocRef, { number: newNumber });
-      setWhatsAppNumber(newNumber); // Update state locally
-
+      
       // Generate and save new password
       const newPassword = `ibrb${newNumber.slice(-4)}`;
       await setDoc(adminDocRef, { password: newPassword });
-      setAdminPassword(newPassword); // Update state locally
+      
+      // Update state locally AFTER successful save
+      setWhatsAppNumber(newNumber);
+      setAdminPassword(newPassword);
 
       toast({
           title: "Configuração Salva!",
@@ -274,7 +279,7 @@ export function PrayerSchedule() {
         });
         return;
     }
-    const scheduleText = `*Escala da Torre de Oração - ${format(dateToFormat, 'PPP', { locale: ptBR })}*\n\n${bookedSlots
+    const scheduleText = `*Escala de Oração - ${format(dateToFormat, 'PPP', { locale: ptBR })}*\n\n${bookedSlots
       .map((s) => `*${s.time}*: ${s.bookedBy}`)
       .join('\n')}\n\nObrigado a todos pela participação!`;
     const encodedMessage = encodeURIComponent(scheduleText);
@@ -465,16 +470,6 @@ service cloud.firestore {
                 </Alert>
             )}
 
-            {!isScheduleDefined && (
-                <Alert>
-                    <Info className="h-4 w-4" />
-                    <AlertTitle>Nenhuma escala definida</AlertTitle>
-                    <AlertDescription>
-                        Nenhuma escala definida. Volte mais tarde!
-                    </AlertDescription>
-                </Alert>
-            )}
-
             <Card className="shadow-lg">
                 <CardHeader>
                 <CardTitle>Configuração do WhatsApp e Senha</CardTitle>
@@ -489,10 +484,10 @@ service cloud.firestore {
                     id="whatsapp-number"
                     type="tel"
                     placeholder="Ex: 5511999998888"
-                    defaultValue={whatsAppNumber}
-                    onChange={(e) => setWhatsAppNumber(e.target.value)}
+                    value={whatsAppNumberInput}
+                    onChange={(e) => setWhatsAppNumberInput(e.target.value)}
                     />
-                    <Button size="icon" onClick={() => updateWhatsAppConfigInFirestore(whatsAppNumber)}>
+                    <Button size="icon" onClick={() => updateWhatsAppConfigInFirestore(whatsAppNumberInput)}>
                     <Save className="w-5 h-5" />
                     </Button>
                 </div>
@@ -690,7 +685,7 @@ service cloud.firestore {
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Aviso</AlertTitle>
                 <AlertDescription>
-                    A escala da Torre de Oração ainda não foi definida. Por favor, volte mais tarde.
+                    A escala para o dia de hoje ainda não foi definida. Por favor, volte mais tarde.
                 </AlertDescription>
             </Alert>
             <Link href="https://www.ibrnobrasil.com.br" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
