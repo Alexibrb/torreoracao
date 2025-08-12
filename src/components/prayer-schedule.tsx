@@ -375,7 +375,10 @@ export function PrayerSchedule() {
       toast({ title: "Intervalo de horário inválido.", description: "O horário de início deve ser menor que o de fim.", variant: "destructive" });
       return;
     }
+    
+    // Generate the new slots based on the current state of startTime and endTime
     const newSlots = generateTimeSlots(startTime, endTime, slots);
+    
     const newScheduleData: ScheduleData = {
       slots: newSlots,
       startTime,
@@ -383,7 +386,17 @@ export function PrayerSchedule() {
       isScheduleDefined: true,
       whatsAppSent: false,
     };
+
+    // Save to Firestore
     updateScheduleInFirestore(newScheduleData);
+    
+    // Also update the local state immediately for instant UI feedback
+    setSlots(newSlots);
+    setStartTime(startTime);
+    setEndTime(endTime);
+    setIsScheduleDefined(true);
+    setWhatsAppSent(false);
+
     toast({
       title: "Agenda Definida!",
       description: `A escala para ${format(currentScheduleDate, 'PPP', { locale: ptBR })} das ${startTime}h às ${endTime}h está disponível.`
