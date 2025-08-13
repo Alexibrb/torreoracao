@@ -141,11 +141,8 @@ export function PrayerSchedule() {
         // Reset to default state if no document exists for this date
         setIsScheduleDefined(false);
         setSlots([]);
-        // Keep admin-defined start/end time if they are editing, otherwise reset
-        if (!isAdminMode) {
-          setStartTime(6);
-          setEndTime(18);
-        }
+        setStartTime(6);
+        setEndTime(18);
         setWhatsAppSent(false);
       }
       setIsLoading(false);
@@ -180,12 +177,12 @@ export function PrayerSchedule() {
 
 
     return () => unsubscribe();
-  }, [todayDocId, toast, isAdminMode]);
+  }, [todayDocId, toast]);
 
-  const updateScheduleInFirestore = useCallback(async (dataToUpdate: ScheduleData) => {
+  const updateScheduleInFirestore = useCallback(async (dataToUpdate: Partial<ScheduleData>) => {
       const docRef = doc(db, FIRESTORE_COLLECTION, todayDocId);
       try {
-        await setDoc(docRef, dataToUpdate);
+        await setDoc(docRef, dataToUpdate, { merge: true });
       } catch (error) {
           console.error("Failed to save state to Firestore", error);
           toast({
@@ -237,23 +234,23 @@ export function PrayerSchedule() {
   };
 
 
-  const generateTimeSlots = useCallback((start: number, end: number): Slot[] => {
+ const generateTimeSlots = useCallback((start: number, end: number): Slot[] => {
     const newSlots: Slot[] = [];
     if (end <= start) return [];
-  
+
     for (let i = start; i < end; i++) {
-      const startTimeStr = `${String(i).padStart(2, '0')}h`;
-      const endTimeStr = `${String(i + 1).padStart(2, '0')}h`;
-      const time = `${startTimeStr} - ${endTimeStr}`;
-  
-      newSlots.push({
-        time: time,
-        isBooked: false,
-        bookedBy: null,
-      });
+        const startTimeStr = `${String(i).padStart(2, '0')}h`;
+        const endTimeStr = `${String(i + 1).padStart(2, '0')}h`;
+        const time = `${startTimeStr} - ${endTimeStr}`;
+
+        newSlots.push({
+            time: time,
+            isBooked: false,
+            bookedBy: null,
+        });
     }
     return newSlots;
-  }, []);
+}, []);
 
   const bookedSlots = useMemo(() => (slots || []).filter((s) => s.isBooked).sort((a, b) => a.time.localeCompare(b.time)), [slots]);
   const allSlotsBooked = useMemo(() => isScheduleDefined && (slots || []).length > 0 && (slots || []).every((s) => s.isBooked), [slots, isScheduleDefined]);
@@ -311,15 +308,7 @@ export function PrayerSchedule() {
         s.time === selectedSlot.time ? { ...s, isBooked: true, bookedBy: values.name } : s
       );
       
-      const updatedData: ScheduleData = {
-        slots: updatedSlots,
-        isScheduleDefined,
-        startTime,
-        endTime,
-        whatsAppSent,
-      };
-
-      await updateScheduleInFirestore(updatedData);
+      await updateScheduleInFirestore({ slots: updatedSlots });
       
       setIsBookingDialogOpen(false);
       setSelectedSlot(null);
@@ -336,16 +325,8 @@ export function PrayerSchedule() {
       const updatedSlots = slots.map((s) =>
         s.time === editingSlot.time ? { ...s, isBooked: true, bookedBy: values.name } : s
       );
-
-      const updatedData: ScheduleData = {
-        slots: updatedSlots,
-        isScheduleDefined,
-        startTime,
-        endTime,
-        whatsAppSent,
-      };
       
-      await updateScheduleInFirestore(updatedData);
+      await updateScheduleInFirestore({ slots: updatedSlots });
 
       toast({
         title: 'Agendamento Atualizado!',
@@ -360,14 +341,7 @@ export function PrayerSchedule() {
     const updatedSlots = slots.map((s) =>
       s.time === slotToFree.time ? { ...s, isBooked: false, bookedBy: null } : s
     );
-    const updatedData: ScheduleData = {
-      slots: updatedSlots,
-      isScheduleDefined,
-      startTime,
-      endTime,
-      whatsAppSent,
-    };
-     await updateScheduleInFirestore(updatedData);
+     await updateScheduleInFirestore({ slots: updatedSlots });
      toast({
        title: 'Horário Liberado!',
        description: `O horário ${slotToFree.time} está disponível novamente.`,
@@ -409,14 +383,9 @@ export function PrayerSchedule() {
       isScheduleDefined: true,
       whatsAppSent: false,
     };
-
-    await updateScheduleInFirestore(newScheduleData);
     
-    setSlots(newSlots);
-    setStartTime(startTime);
-    setEndTime(endTime);
-    setIsScheduleDefined(true);
-    setWhatsAppSent(false);
+    const docRef = doc(db, FIRESTORE_COLLECTION, todayDocId);
+    await setDoc(docRef, newScheduleData);
 
     toast({
       title: "Agenda Definida!",
@@ -710,71 +679,6 @@ service cloud.firestore {
     );
   }
 
-  // View when no schedule is defined for regular users
-  if (!isScheduleDefined) {
-    return (
-        <div className="space-y-4 text-center">
-            <Alert variant="destructive" className="shadow-lg bg-destructive text-white [&>svg]:text-white">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Aviso</AlertTitle>
-                <AlertDescription>
-                    A escala para a Torre de Oração ainda não foi definida. Por favor, volte mais tarde.
-                </AlertDescription>
-            </Alert>
-            <Link href="https://www.ibrnobrasil.com.br" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
-                Visite o site da Igreja
-                <ExternalLink className="w-4 h-4" />
-            </Link>
-            <Card className="shadow-lg text-left">
-                <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                    <Lock className="w-6 h-6" />
-                    Área do Administrador
-                    </div>
-                </CardTitle>
-                <CardDescription>
-                    Acesse para configurar ou editar a escala de oração.
-                </CardDescription>
-                </CardHeader>
-                <CardFooter>
-                <Button onClick={handleAdminButtonClick} className="w-full">
-                    Acessar como Admin
-                </Button>
-                </CardFooter>
-            </Card>
-            <Dialog open={isAuthDialogOpen} onOpenChange={setIsAuthDialogOpen}>
-                <DialogContent className="sm:max-w-[425px]">
-                <DialogHeader>
-                    <DialogTitle>Acesso Restrito</DialogTitle>
-                    <DialogDescription>
-                    Por favor, insira a senha de administrador para continuar.
-                    </DialogDescription>
-                </DialogHeader>
-                <Form {...authForm}>
-                    <form onSubmit={authForm.handleSubmit(handleAdminAuthSubmit)} className="space-y-8 p-4">
-                    <FormField control={authForm.control} name="password"
-                        render={({ field }) => (
-                        <FormItem>
-                            <FormLabel>Senha</FormLabel>
-                            <FormControl>
-                            <Input type="password" placeholder="Digite a senha" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                        </FormItem>
-                        )}
-                    />
-                    <DialogFooter>
-                        <Button type="submit">Autenticar</Button>
-                    </DialogFooter>
-                    </form>
-                </Form>
-                </DialogContent>
-            </Dialog>
-        </div>
-    );
-  }
-
   // Default View for regular users when schedule is defined
   return (
       <div className="space-y-8">
@@ -793,26 +697,61 @@ service cloud.firestore {
              Selecione um dia e um horário para participar da nossa Torre de oração. Clique em um horário disponível para agendar sua vaga na escala de oração.
             </CardDescription>
         </CardHeader>
-        <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {(slots || []).map((slot) => (
-                <Button
-                key={slot.time}
-                variant={slot.isBooked ? 'destructive' : 'default'}
-                className={cn('h-20 flex flex-col items-start p-3 transition-all duration-300 ease-in-out transform hover:scale-105 shadow-md font-bold', !slot.isBooked && 'bg-green-600 hover:bg-green-700 text-white')}
-                onClick={() => handleSelectSlot(slot)}
-                disabled={slot.isBooked}
-                >
-                <div className="text-lg">{slot.time}</div>
-                <div className="flex items-center gap-1 text-sm mt-1 font-normal">
-                    {slot.isBooked ? (<><User className="w-4 h-4" /><span>{slot.bookedBy}</span></>) : (<><HelpingHand className="w-4 h-4" /><span>Disponível</span></>)}
+        <CardContent className="space-y-4">
+            <Popover>
+              <PopoverTrigger asChild>
+                  <Button
+                  variant={'outline'}
+                  className={cn('w-full sm:w-[280px] justify-start text-left font-normal',!scheduleDate && 'text-muted-foreground')}
+                  >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {scheduleDate ? format(new Date(scheduleDate), 'PPP', { locale: ptBR }) : <span>Escolha uma data</span>}
+                  </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0">
+                  <Calendar
+                  mode="single"
+                  selected={scheduleDate}
+                  onSelect={(date) => setScheduleDate(date || undefined)}
+                  initialFocus
+                  locale={ptBR}
+                  />
+              </PopoverContent>
+            </Popover>
+
+            {!isScheduleDefined && (
+                 <div className="space-y-4 text-center">
+                    <Alert variant="destructive" className="shadow-lg bg-red-600 text-white">
+                        <AlertTriangle className="h-4 w-4 text-white" />
+                        <AlertTitle className="text-white">Nenhuma escala definida</AlertTitle>
+                        <AlertDescription className="text-white">
+                            A escala para a Torre de Oração no dia selecionado ainda não foi definida. Por favor, volte mais tarde ou selecione outra data.
+                        </AlertDescription>
+                    </Alert>
                 </div>
-                </Button>
-            ))}
-            </div>
+            )}
+            
+            {isScheduleDefined && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {(slots || []).map((slot) => (
+                    <Button
+                    key={slot.time}
+                    variant={slot.isBooked ? 'destructive' : 'default'}
+                    className={cn('h-20 flex flex-col items-start p-3 transition-all duration-300 ease-in-out transform hover:scale-105 shadow-md font-bold', !slot.isBooked && 'bg-green-600 hover:bg-green-700 text-white')}
+                    onClick={() => handleSelectSlot(slot)}
+                    disabled={slot.isBooked}
+                    >
+                    <div className="text-lg">{slot.time}</div>
+                    <div className="flex items-center gap-1 text-sm mt-1 font-normal">
+                        {slot.isBooked ? (<><User className="w-4 h-4" /><span>{slot.bookedBy}</span></>) : (<><HelpingHand className="w-4 h-4" /><span>Disponível</span></>)}
+                    </div>
+                    </Button>
+                ))}
+                </div>
+            )}
         </CardContent>
         </Card>
-        {bookedSlots.length > 0 && (
+        {isScheduleDefined && bookedSlots.length > 0 && (
         <Card className="shadow-lg">
             <CardHeader>
             <CardTitle>Escala de Oração do Dia</CardTitle>
