@@ -15,7 +15,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mt-6 p-4 bg-red-100 border border-red-200 text-red-800 rounded-lg text-center shadow-md">
+        <div className="mt-6 p-4 bg-green-100 border border-green-200 text-green-800 rounded-lg text-center shadow-md">
           <p className="text-xs italic">"Agora, estarão abertos os meus olhos e atentos os meus ouvidos à oração deste lugar."</p>
           <p className="text-xs font-semibold mt-1">- 2 Crônicas 7:15</p>
         </div>
