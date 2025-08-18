@@ -1,11 +1,12 @@
 
+
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { format, addDays, isWithinInterval, startOfDay, endOfDay, setHours, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Calendar as CalendarIcon, Clock, HelpingHand, User, Lock, Trash2, Loader2, Edit, XCircle, Save, AlertTriangle, KeyRound, List, Pencil, Eye, UserCheck, UserX } from 'lucide-react';
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, SVGProps } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { doc, onSnapshot, setDoc, deleteDoc, getDoc, writeBatch, collection, query, where, getDocs, orderBy } from "firebase/firestore";
@@ -50,7 +51,6 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
-import { WhatsappIcon } from '@/components/icons';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import Link from 'next/link';
 import { db, firebaseApp } from '@/lib/firebase';
@@ -58,6 +58,26 @@ import { db, firebaseApp } from '@/lib/firebase';
 const FIRESTORE_COLLECTION = "torredeoracao";
 const WHATSAPP_CONFIG_DOC = "whatsappConfig";
 const ADMIN_CONFIG_DOC = "adminConfig";
+
+function WhatsappIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+      <path d="M14.05 14.05a7 7 0 1 0-9.9-9.9" />
+    </svg>
+  );
+}
 
 type Slot = {
   time: string;
