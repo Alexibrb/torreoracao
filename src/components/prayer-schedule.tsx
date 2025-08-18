@@ -1,13 +1,14 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { format } from 'date-fns';
+import { format, addDays, isWithinInterval, startOfDay, endOfDay, setHours, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Calendar as CalendarIcon, Clock, HelpingHand, User, Lock, Trash2, Loader2, Edit, XCircle, Save, AlertTriangle, ExternalLink, ShieldAlert, Info } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, HelpingHand, User, Lock, Trash2, Loader2, Edit, XCircle, Save, AlertTriangle, KeyRound, List, Pencil, Eye, UserCheck, UserX } from 'lucide-react';
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { doc, onSnapshot, setDoc, deleteDoc, getDoc, writeBatch } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, deleteDoc, getDoc, writeBatch, collection, query, where, getDocs, orderBy } from "firebase/firestore";
+import type { DateRange } from "react-day-picker";
 
 
 import { Button } from '@/components/ui/button';
@@ -43,6 +44,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
@@ -59,18 +62,28 @@ type Slot = {
   time: string;
   isBooked: boolean;
   bookedBy: string | null;
+  dateTime: string;
+  password?: string | null;
 };
 
 type ScheduleData = {
+  id: string;
   slots: Slot[];
-  isScheduleDefined: boolean;
+  startDate: string;
+  endDate: string;
   startTime: number;
   endTime: number;
   whatsAppSent?: boolean;
 };
 
+
 const bookingFormSchema = z.object({
   name: z.string().min(2, { message: 'O nome deve ter pelo menos 2 caracteres.' }).max(50),
+  password: z.string().min(4, { message: 'A senha deve ter pelo menos 4 caracteres.'}),
+});
+
+const deleteBookingFormSchema = z.object({
+  password: z.string().min(1, { message: 'Por favor, insira a senha.' }),
 });
 
 const editBookingFormSchema = z.object({
@@ -82,30 +95,43 @@ const adminAuthSchema = z.object({
 });
 
 export function PrayerSchedule() {
-  const [scheduleDate, setScheduleDate] = useState<Date | undefined>(new Date());
-  const [slots, setSlots] = useState<Slot[]>([]);
+  const [scheduleStartDate, setScheduleStartDate] = useState<Date | undefined>();
+  const [scheduleEndDate, setScheduleEndDate] = useState<Date | undefined>();
+  const [allSchedules, setAllSchedules] = useState<ScheduleData[]>([]);
+  const [activeSchedule, setActiveSchedule] = useState<ScheduleData | null>(null);
+  
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [isBookingDialogOpen, setIsBookingDialogOpen] = useState(false);
+  const [isDeletingDialogOpen, setIsDeletingDialogOpen] = useState(false);
+  const [isScheduleDeleteDialogOpen, setIsScheduleDeleteDialogOpen] = useState(false);
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [isAuthDialogOpen, setIsAuthDialogOpen] = useState(false);
-  const [isScheduleDefined, setIsScheduleDefined] = useState(false);
+  
   const [startTime, setStartTime] = useState(6);
   const [endTime, setEndTime] = useState(18);
-  const [whatsAppSent, setWhatsAppSent] = useState(false);
   const [whatsAppNumber, setWhatsAppNumber] = useState('');
   const [whatsAppNumberInput, setWhatsAppNumberInput] = useState('');
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [editingSlot, setEditingSlot] = useState<Slot | null>(null);
   const [isEditingDialogOpen, setIsEditingDialogOpen] = useState(false);
   const [firebaseError, setFirebaseError] = useState(false);
   const [adminPassword, setAdminPassword] = useState('123');
+  const [filterStartDate, setFilterStartDate] = useState<Date | undefined>();
+  const [filterEndDate, setFilterEndDate] = useState<Date | undefined>();
+  const [showAdminBookings, setShowAdminBookings] = useState(false);
+  const [userCanDeleteBookings, setUserCanDeleteBookings] = useState(true);
+
 
   const { toast } = useToast();
   
   const bookingForm = useForm<z.infer<typeof bookingFormSchema>>({
     resolver: zodResolver(bookingFormSchema),
-    defaultValues: { name: '' },
+    defaultValues: { name: '', password: '' },
+  });
+
+  const deleteBookingForm = useForm<z.infer<typeof deleteBookingFormSchema>>({
+    resolver: zodResolver(deleteBookingFormSchema),
+    defaultValues: { password: '' },
   });
 
   const editBookingForm = useForm<z.infer<typeof editBookingFormSchema>>({
@@ -118,45 +144,82 @@ export function PrayerSchedule() {
     defaultValues: { password: '' },
   });
 
-  const todayDocId = useMemo(() => {
-      const date = scheduleDate || new Date();
-      return format(date, 'yyyy-MM-dd');
-  }, [scheduleDate]);
-
   useEffect(() => {
     setIsLoading(true);
     setFirebaseError(false);
+    
+    const q = query(collection(db, FIRESTORE_COLLECTION), orderBy("startDate", "asc"));
 
-    const docRef = doc(db, FIRESTORE_COLLECTION, todayDocId);
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const today = startOfDay(new Date());
+        let currentAndFutureSchedules: ScheduleData[] = [];
+        
+        querySnapshot.forEach((doc) => {
+            if (doc.id === ADMIN_CONFIG_DOC || doc.id === WHATSAPP_CONFIG_DOC) return;
 
-    const unsubscribe = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data() as ScheduleData;
-        setSlots(data.slots || []);
-        setIsScheduleDefined(data.isScheduleDefined);
-        setStartTime(data.startTime);
-        setEndTime(data.endTime);
-        setWhatsAppSent(data.whatsAppSent || false);
-      } else {
-        // Reset to default state if no document exists for this date
-        setIsScheduleDefined(false);
-        setSlots([]);
-        setStartTime(6);
-        setEndTime(18);
-        setWhatsAppSent(false);
-      }
-      setIsLoading(false);
+            const data = doc.data() as Omit<ScheduleData, 'id'>;
+            const schedule = { id: doc.id, ...data };
+            const scheduleEnd = endOfDay(new Date(schedule.endDate));
+
+            if (today <= scheduleEnd) {
+                currentAndFutureSchedules.push(schedule);
+            }
+        });
+        
+        setAllSchedules(currentAndFutureSchedules);
+        
+        const currentActiveId = activeSchedule?.id;
+        const activeStillExists = currentAndFutureSchedules.some(s => s.id === currentActiveId);
+
+        if (activeStillExists && activeSchedule) {
+            const updatedActive = currentAndFutureSchedules.find(s => s.id === activeSchedule.id);
+            setActiveSchedule(updatedActive || null);
+        } else if (currentAndFutureSchedules.length > 0) {
+            let foundSchedule: ScheduleData | null = null;
+            let futureSchedule: ScheduleData | null = null;
+
+            for(const schedule of currentAndFutureSchedules) {
+                const scheduleStart = startOfDay(new Date(schedule.startDate));
+                const scheduleEnd = endOfDay(new Date(schedule.endDate));
+
+                if (isWithinInterval(today, { start: scheduleStart, end: scheduleEnd })) {
+                    foundSchedule = schedule;
+                    break;
+                }
+                if (scheduleStart > today && !futureSchedule) {
+                    futureSchedule = schedule;
+                }
+            }
+            
+            const scheduleToSet = foundSchedule || futureSchedule || currentAndFutureSchedules[0];
+
+            if(!activeSchedule || activeSchedule.id !== scheduleToSet.id) {
+              setActiveSchedule(scheduleToSet);
+              setFilterStartDate(new Date(scheduleToSet.startDate));
+              setFilterEndDate(new Date(scheduleToSet.endDate));
+            }
+        } else {
+            setActiveSchedule(null);
+        }
+
+        setIsLoading(false);
+
     }, (error) => {
-      console.error("Firestore snapshot error:", error);
-      toast({
-        title: "Erro de Sincronização",
-        description: "Não foi possível conectar ao banco de dados. Verifique sua conexão e as permissões do Firebase.",
-        variant: "destructive"
-      });
-      setFirebaseError(true);
-      setIsLoading(false);
+        console.error("Firestore snapshot error:", error);
+        toast({
+            title: "Erro de Sincronização",
+            description: "Não foi possível conectar ao banco de dados. Verifique sua conexão e as permissões do Firebase.",
+            variant: "destructive"
+        });
+        setFirebaseError(true);
+        setIsLoading(false);
     });
 
+    return () => unsubscribe();
+  }, []);
+
+
+  useEffect(() => {
     // Fetch WhatsApp config
     const whatsAppDocRef = doc(db, FIRESTORE_COLLECTION, WHATSAPP_CONFIG_DOC);
     getDoc(whatsAppDocRef).then((docSnap) => {
@@ -167,22 +230,25 @@ export function PrayerSchedule() {
         }
     }).catch(err => console.error("Error fetching whatsapp config", err));
 
-    // Fetch Admin password
+    // Fetch Admin config
     const adminDocRef = doc(db, FIRESTORE_COLLECTION, ADMIN_CONFIG_DOC);
     getDoc(adminDocRef).then((docSnap) => {
-        if(docSnap.exists() && docSnap.data().password) {
-            setAdminPassword(docSnap.data().password);
+        if(docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.password) {
+                setAdminPassword(data.password);
+            }
+            if (typeof data.userCanDeleteBookings === 'boolean') {
+                setUserCanDeleteBookings(data.userCanDeleteBookings);
+            }
         }
     }).catch(err => console.error("Error fetching admin password", err));
+  }, []);
 
-
-    return () => unsubscribe();
-  }, [todayDocId, toast]);
-
-  const updateScheduleInFirestore = useCallback(async (dataToUpdate: Partial<ScheduleData>) => {
-      const docRef = doc(db, FIRESTORE_COLLECTION, todayDocId);
+  const updateScheduleInFirestore = useCallback(async (schedule: ScheduleData) => {
+      const docRef = doc(db, FIRESTORE_COLLECTION, schedule.id);
       try {
-        await setDoc(docRef, dataToUpdate, { merge: true });
+        await setDoc(docRef, schedule, { merge: true });
       } catch (error) {
           console.error("Failed to save state to Firestore", error);
           toast({
@@ -191,9 +257,25 @@ export function PrayerSchedule() {
               variant: "destructive",
           });
       }
-  }, [todayDocId, toast]);
+  }, [toast]);
 
-  const updateWhatsAppConfigInFirestore = async (newNumber: string) => {
+  const updateAdminConfigInFirestore = async (key: string, value: any) => {
+    try {
+      const adminDocRef = doc(db, FIRESTORE_COLLECTION, ADMIN_CONFIG_DOC);
+      await setDoc(adminDocRef, { [key]: value }, { merge: true });
+      return true;
+    } catch (error) {
+      console.error(`Failed to save ${key} to Firestore`, error);
+      toast({
+        title: "Erro de Salvamento",
+        description: "Não foi possível salvar as configurações.",
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
+
+  const handleUpdateWhatsAppConfig = async (newNumber: string) => {
     if (newNumber.length < 4) {
       toast({
         title: "Número Inválido",
@@ -211,7 +293,7 @@ export function PrayerSchedule() {
       
       const newPassword = `ibrb${newNumber.slice(-4)}`;
       const adminDocRef = doc(db, FIRESTORE_COLLECTION, ADMIN_CONFIG_DOC);
-      batch.set(adminDocRef, { password: newPassword });
+      batch.set(adminDocRef, { password: newPassword }, { merge: true });
       
       await batch.commit();
       
@@ -232,36 +314,103 @@ export function PrayerSchedule() {
         });
     }
   };
+  
+  const handleUserCanDeleteToggle = async (checked: boolean) => {
+    const success = await updateAdminConfigInFirestore('userCanDeleteBookings', checked);
+    if(success) {
+      setUserCanDeleteBookings(checked);
+      toast({
+          title: "Permissão Atualizada!",
+          description: checked ? "Usuários agora podem liberar seus horários." : "Usuários não podem mais liberar seus horários."
+      });
+    }
+  };
 
-
- const generateTimeSlots = useCallback((start: number, end: number): Slot[] => {
+  const generateTimeSlots = useCallback((
+    startDate: Date,
+    endDate: Date,
+    startHour: number,
+    endHour: number
+  ): Slot[] => {
     const newSlots: Slot[] = [];
-    if (end <= start) return [];
 
-    for (let i = start; i < end; i++) {
-        const startTimeStr = `${String(i).padStart(2, '0')}h`;
-        const endTimeStr = `${String(i + 1).padStart(2, '0')}h`;
-        const time = `${startTimeStr} - ${endTimeStr}`;
+    let currentDate = startOfDay(new Date(startDate));
+    const finalDate = endOfDay(new Date(endDate));
 
-        newSlots.push({
+    while (currentDate.getTime() <= finalDate.getTime()) {
+      let currentHour = new Date(currentDate);
+      currentHour.setHours(startHour, 0, 0, 0);
+
+      const dayEndHour = (startOfDay(currentDate).getTime() === startOfDay(finalDate).getTime()) ? endHour : 24;
+
+      while(currentHour.getHours() < dayEndHour) {
+          const nextHour = new Date(currentHour);
+          nextHour.setHours(currentHour.getHours() + 1);
+
+          if (startOfDay(currentDate).getTime() === startOfDay(finalDate).getTime() && nextHour.getHours() > endHour) {
+             break;
+          }
+
+          const time = `${format(currentHour, 'dd/MM')} ${String(currentHour.getHours()).padStart(2, '0')}h-${String(nextHour.getHours()).padStart(2, '0')}h`;
+
+          newSlots.push({
             time: time,
             isBooked: false,
             bookedBy: null,
-        });
+            dateTime: currentHour.toISOString(),
+            password: null,
+          });
+          
+          currentHour.setHours(currentHour.getHours() + 1);
+      }
+      currentDate = addDays(currentDate, 1);
     }
+    
     return newSlots;
-}, []);
+  }, []);
 
-  const bookedSlots = useMemo(() => (slots || []).filter((s) => s.isBooked).sort((a, b) => a.time.localeCompare(b.time)), [slots]);
-  const allSlotsBooked = useMemo(() => isScheduleDefined && (slots || []).length > 0 && (slots || []).every((s) => s.isBooked), [slots, isScheduleDefined]);
+
+  const slotsByDay = useMemo(() => {
+    if (!activeSchedule) return {};
+  
+    const filteredSlots = activeSchedule.slots.filter(slot => {
+      const slotDate = startOfDay(parseISO(slot.dateTime));
+      const start = filterStartDate ? startOfDay(filterStartDate) : null;
+      const end = filterEndDate ? endOfDay(filterEndDate) : null;
+  
+      if (start && slotDate < start) {
+        return false;
+      }
+      if (end && slotDate > end) {
+        return false;
+      }
+      return true;
+    });
+  
+    const groupedSlots: { [key: string]: Slot[] } = {};
+  
+    filteredSlots.forEach(slot => {
+      const dayKey = format(parseISO(slot.dateTime), 'PPP', { locale: ptBR });
+      if (!groupedSlots[dayKey]) {
+        groupedSlots[dayKey] = [];
+      }
+      groupedSlots[dayKey].push(slot);
+    });
+  
+    for (const dayKey in groupedSlots) {
+      groupedSlots[dayKey].sort((a, b) => a.dateTime.localeCompare(b.dateTime));
+    }
+  
+    return groupedSlots;
+  }, [activeSchedule, filterStartDate, filterEndDate]);
+  
+
+  const bookedSlots = useMemo(() => activeSchedule?.slots.filter((s) => s.isBooked).sort((a, b) => a.dateTime.localeCompare(b.dateTime)) || [], [activeSchedule]);
+  const allSlotsBooked = useMemo(() => !!activeSchedule && activeSchedule.slots.length > 0 && activeSchedule.slots.every((s) => s.isBooked), [activeSchedule]);
 
   const handleSendToWhatsApp = useCallback(async () => {
-    if (!scheduleDate || bookedSlots.length === 0) return;
-    const dateToFormat = new Date(scheduleDate);
-    if (isNaN(dateToFormat.getTime())) {
-        toast({ title: "Data inválida para envio.", variant: "destructive" });
-        return;
-    }
+    if (!activeSchedule || bookedSlots.length === 0) return;
+
     if (!whatsAppNumber) {
         toast({
             title: "Número do WhatsApp não configurado",
@@ -270,29 +419,40 @@ export function PrayerSchedule() {
         });
         return;
     }
-    const scheduleText = `*Escala da Torre de Oração para o dia: ${format(dateToFormat, 'PPP', { locale: ptBR })}*\n\n${bookedSlots
+    const scheduleText = `*Escala da Torre de Oração para o período de ${format(new Date(activeSchedule.startDate), 'PPP', { locale: ptBR })} a ${format(new Date(activeSchedule.endDate), 'PPP', { locale: ptBR })}*\n\n${bookedSlots
       .map((s) => `*${s.time}*: ${s.bookedBy}`)
       .join('\n')}\n\nObrigado a todos pela participação!`;
     const encodedMessage = encodeURIComponent(scheduleText);
     const whatsappUrl = `https://wa.me/${whatsAppNumber}?text=${encodedMessage}`;
     window.open(whatsappUrl, '_blank');
     
-    const docRef = doc(db, FIRESTORE_COLLECTION, todayDocId);
-    await setDoc(docRef, { whatsAppSent: true }, { merge: true });
+    const updatedSchedule = { ...activeSchedule, whatsAppSent: true };
+    await updateScheduleInFirestore(updatedSchedule);
 
-  }, [scheduleDate, bookedSlots, whatsAppNumber, toast, todayDocId]);
+  }, [activeSchedule, bookedSlots, whatsAppNumber, toast, updateScheduleInFirestore]);
 
   useEffect(() => {
-    if (allSlotsBooked && !whatsAppSent) {
+    if (allSlotsBooked && activeSchedule && !activeSchedule.whatsAppSent) {
       handleSendToWhatsApp();
     }
-  }, [allSlotsBooked, whatsAppSent, handleSendToWhatsApp]);
+  }, [allSlotsBooked, activeSchedule, handleSendToWhatsApp]);
 
   const handleSelectSlot = (slot: Slot) => {
-    if (!slot.isBooked) {
-      setSelectedSlot(slot);
-      setIsBookingDialogOpen(true);
+    setSelectedSlot(slot);
+    if (slot.isBooked) {
+      if (userCanDeleteBookings) {
+        deleteBookingForm.reset();
+        setIsDeletingDialogOpen(true);
+      } else {
+        toast({
+          title: "Ação não permitida",
+          description: "O administrador desativou a liberação de horários.",
+          variant: "destructive"
+        })
+      }
+    } else {
       bookingForm.reset();
+      setIsBookingDialogOpen(true);
     }
   };
   
@@ -303,12 +463,13 @@ export function PrayerSchedule() {
   };
 
   const handleBookingSubmit = async (values: z.infer<typeof bookingFormSchema>) => {
-    if (selectedSlot) {
-      const updatedSlots = slots.map((s) =>
-        s.time === selectedSlot.time ? { ...s, isBooked: true, bookedBy: values.name } : s
+    if (selectedSlot && activeSchedule) {
+      const updatedSlots = activeSchedule.slots.map((s) =>
+        s.dateTime === selectedSlot.dateTime ? { ...s, isBooked: true, bookedBy: values.name, password: values.password } : s
       );
       
-      await updateScheduleInFirestore({ slots: updatedSlots });
+      const updatedSchedule = { ...activeSchedule, slots: updatedSlots };
+      await updateScheduleInFirestore(updatedSchedule);
       
       setIsBookingDialogOpen(false);
       setSelectedSlot(null);
@@ -320,13 +481,39 @@ export function PrayerSchedule() {
     }
   };
   
+  const handleDeleteBookingSubmit = async (values: z.infer<typeof deleteBookingFormSchema>) => {
+    if (selectedSlot && activeSchedule) {
+      if (values.password === selectedSlot.password) {
+        const updatedSlots = activeSchedule.slots.map((s) =>
+          s.dateTime === selectedSlot.dateTime ? { ...s, isBooked: false, bookedBy: null, password: null } : s
+        );
+        const updatedSchedule = { ...activeSchedule, slots: updatedSlots };
+        await updateScheduleInFirestore(updatedSchedule);
+
+        setIsDeletingDialogOpen(false);
+        setSelectedSlot(null);
+        toast({
+          title: 'Agendamento Removido!',
+          description: `O horário ${selectedSlot.time} foi liberado.`,
+        });
+      } else {
+        toast({
+          title: 'Senha Incorreta',
+          description: 'A senha para liberar este horário está incorreta.',
+          variant: 'destructive',
+        });
+      }
+    }
+  };
+
   const handleEditBookingSubmit = async (values: z.infer<typeof editBookingFormSchema>) => {
-    if (editingSlot) {
-      const updatedSlots = slots.map((s) =>
-        s.time === editingSlot.time ? { ...s, isBooked: true, bookedBy: values.name } : s
+    if (editingSlot && activeSchedule) {
+      const updatedSlots = activeSchedule.slots.map((s) =>
+        s.dateTime === editingSlot.dateTime ? { ...s, isBooked: true, bookedBy: values.name } : s
       );
       
-      await updateScheduleInFirestore({ slots: updatedSlots });
+      const updatedSchedule = { ...activeSchedule, slots: updatedSlots };
+      await updateScheduleInFirestore(updatedSchedule);
 
       toast({
         title: 'Agendamento Atualizado!',
@@ -338,14 +525,17 @@ export function PrayerSchedule() {
   };
   
   const handleFreeSlot = async (slotToFree: Slot) => {
-    const updatedSlots = slots.map((s) =>
-      s.time === slotToFree.time ? { ...s, isBooked: false, bookedBy: null } : s
-    );
-     await updateScheduleInFirestore({ slots: updatedSlots });
-     toast({
-       title: 'Horário Liberado!',
-       description: `O horário ${slotToFree.time} está disponível novamente.`,
-     });
+    if (activeSchedule) {
+        const updatedSlots = activeSchedule.slots.map((s) =>
+            s.dateTime === slotToFree.dateTime ? { ...s, isBooked: false, bookedBy: null, password: null } : s
+        );
+        const updatedSchedule = { ...activeSchedule, slots: updatedSlots };
+        await updateScheduleInFirestore(updatedSchedule);
+        toast({
+            title: 'Horário Liberado!',
+            description: `O horário ${slotToFree.time} está disponível novamente.`,
+        });
+    }
   };
 
   const handleAdminAuthSubmit = (values: z.infer<typeof adminAuthSchema>) => {
@@ -364,59 +554,97 @@ export function PrayerSchedule() {
   };
 
   const handleAdminConfigSubmit = async () => {
-    const currentScheduleDate = scheduleDate ? new Date(scheduleDate) : new Date();
-    if (isNaN(currentScheduleDate.getTime())) {
-      toast({ title: "Data inválida.", description: "Por favor, selecione uma data válida.", variant: "destructive" });
-      return;
+    if (!scheduleStartDate || !scheduleEndDate) {
+        toast({ title: "Datas inválidas.", description: "Por favor, selecione as datas de início e fim.", variant: "destructive" });
+        return;
     }
-    if (startTime >= endTime) {
-      toast({ title: "Intervalo de horário inválido.", description: "O horário de início deve ser menor que o de fim.", variant: "destructive" });
+    
+    if (scheduleStartDate > scheduleEndDate) {
+      toast({ title: "Intervalo de datas inválido.", description: "A data de início deve ser anterior ou igual à data de fim.", variant: "destructive" });
       return;
     }
     
-    const newSlots = generateTimeSlots(startTime, endTime);
+    const newSlots = generateTimeSlots(scheduleStartDate, scheduleEndDate, startTime, endTime);
+    if(newSlots.length === 0){
+        toast({ title: "Nenhum horário gerado.", description: "Verifique as datas e horários. A escala deve ter pelo menos uma hora.", variant: "destructive" });
+        return;
+    }
+
+    const docId = format(scheduleStartDate, 'yyyy-MM-dd-HHmm');
     
     const newScheduleData: ScheduleData = {
+      id: docId,
       slots: newSlots,
       startTime,
       endTime,
-      isScheduleDefined: true,
+      startDate: scheduleStartDate.toISOString(),
+      endDate: scheduleEndDate.toISOString(),
       whatsAppSent: false,
     };
     
-    const docRef = doc(db, FIRESTORE_COLLECTION, todayDocId);
+    const docRef = doc(db, FIRESTORE_COLLECTION, docId);
     await setDoc(docRef, newScheduleData);
+
 
     toast({
       title: "Agenda Definida!",
-      description: `A escala para ${format(currentScheduleDate, 'PPP', { locale: ptBR })} das ${startTime}h às ${endTime}h está disponível.`
+      description: `A escala de ${format(scheduleStartDate, 'PPP', { locale: ptBR })} até ${format(scheduleEndDate, 'PPP', { locale: ptBR })} está disponível.`
     });
   };
 
   const handleDeleteSchedule = useCallback(async () => {
-    const docRef = doc(db, FIRESTORE_COLLECTION, todayDocId);
-    try {
-        await deleteDoc(docRef);
-        setIsDeleteDialogOpen(false);
-        toast({
-            title: "Escala Excluída",
-            description: "A escala de oração foi removida com sucesso.",
-        });
-    } catch (error) {
-        console.error("Failed to delete schedule from Firestore", error);
-        toast({
-            title: "Erro ao Excluir",
-            description: "Não foi possível remover a escala do banco de dados.",
-            variant: "destructive",
-        });
+    if (activeSchedule) {
+        const docRef = doc(db, FIRESTORE_COLLECTION, activeSchedule.id);
+        try {
+            await deleteDoc(docRef);
+            setIsScheduleDeleteDialogOpen(false);
+            setActiveSchedule(null); // Clear active schedule
+            setShowAdminBookings(false); // Hide details
+            toast({
+                title: "Escala Excluída",
+                description: "A escala de oração foi removida com sucesso.",
+            });
+        } catch (error) {
+            console.error("Failed to delete schedule from Firestore", error);
+            toast({
+                title: "Erro ao Excluir",
+                description: "Não foi possível remover a escala do banco de dados.",
+                variant: "destructive",
+            });
+        }
     }
-  }, [todayDocId, toast]);
+  }, [activeSchedule, toast]);
 
   const handleAdminButtonClick = () => {
     authForm.reset();
     setIsAuthDialogOpen(true);
   };
   
+  const handleStartDateSelect = (date: Date | undefined) => {
+    setScheduleStartDate(date);
+    if (date && (!scheduleEndDate || date > scheduleEndDate)) {
+      setScheduleEndDate(date);
+    }
+  };
+
+  const handleFilterStartDateSelect = (date: Date | undefined) => {
+    setFilterStartDate(date);
+    if (date && (!filterEndDate || date > filterEndDate)) {
+      setFilterEndDate(date);
+    }
+  };
+
+  const handleScheduleSelect = (scheduleId: string) => {
+    const selected = allSchedules.find(s => s.id === scheduleId);
+    if (selected) {
+        setActiveSchedule(selected);
+        setFilterStartDate(new Date(selected.startDate));
+        setFilterEndDate(new Date(selected.endDate));
+        setShowAdminBookings(false);
+    }
+  };
+
+
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen space-y-4">
@@ -449,7 +677,7 @@ export function PrayerSchedule() {
             
             {firebaseError && (
                 <Alert variant="destructive">
-                    <ShieldAlert className="h-4 w-4" />
+                    <AlertTriangle className="h-4 w-4" />
                     <AlertTitle>Ação Necessária: Regras de Segurança do Firebase</AlertTitle>
                     <AlertDescription>
                         <p>O aplicativo não consegue acessar o banco de dados. Isso geralmente é causado por regras de segurança restritivas. Para corrigir, vá para o seu **Console do Firebase**:</p>
@@ -474,54 +702,175 @@ service cloud.firestore {
 
             <Card className="shadow-lg">
                 <CardHeader>
-                <CardTitle>Configuração do WhatsApp e Senha</CardTitle>
+                <CardTitle>Configurações Gerais</CardTitle>
                 <CardDescription>
-                    Insira o número de WhatsApp para onde a escala será enviada. Use o formato internacional sem `+' ou espaços (ex: 5511999998888). Ao salvar, a senha do admin será trocada para 'ibrb' + os 4 últimos dígitos do número.
+                    Gerencie as configurações globais do aplicativo.
                 </CardDescription>
                 </CardHeader>
-                <CardContent>
-                <div className="flex items-center gap-2">
-                    <WhatsappIcon className="w-5 h-5" />
-                    <Input
-                    id="whatsapp-number"
-                    type="tel"
-                    placeholder="Ex: 5511999998888"
-                    value={whatsAppNumberInput}
-                    onChange={(e) => setWhatsAppNumberInput(e.target.value)}
-                    />
-                    <Button size="icon" onClick={() => updateWhatsAppConfigInFirestore(whatsAppNumberInput)}>
-                    <Save className="w-5 h-5" />
-                    </Button>
-                </div>
+                <CardContent className="space-y-6">
+                  <div>
+                    <Label className="font-semibold">WhatsApp e Senha Admin</Label>
+                    <p className="text-sm text-muted-foreground mb-2">
+                        Insira o número de WhatsApp para onde a escala será enviada. Use o formato internacional sem `+' ou espaços (ex: 5511999998888). Ao salvar, a senha do admin será trocada para 'ibrb' + os 4 últimos dígitos do número.
+                    </p>
+                    <div className="flex items-center gap-2">
+                        <WhatsappIcon className="w-5 h-5" />
+                        <Input
+                        id="whatsapp-number"
+                        type="tel"
+                        placeholder="Ex: 5511999998888"
+                        value={whatsAppNumberInput}
+                        onChange={(e) => setWhatsAppNumberInput(e.target.value)}
+                        />
+                        <Button size="icon" onClick={() => handleUpdateWhatsAppConfig(whatsAppNumberInput)}>
+                        <Save className="w-5 h-5" />
+                        </Button>
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="font-semibold">Permissão de Liberação de Horário</Label>
+                     <p className="text-sm text-muted-foreground mb-2">
+                        Controle se os usuários podem liberar seus próprios horários agendados usando a senha que cadastraram.
+                    </p>
+                     <div className="flex items-center space-x-2 rounded-lg border p-4">
+                        <Switch
+                          id="user-delete-permission"
+                          checked={userCanDeleteBookings}
+                          onCheckedChange={handleUserCanDeleteToggle}
+                        />
+                        <Label htmlFor="user-delete-permission" className="flex flex-col gap-1">
+                          <span className='font-bold'>{userCanDeleteBookings ? "Permitido" : "Bloqueado"}</span>
+                          <span className='text-xs text-muted-foreground'>
+                            {userCanDeleteBookings ? "Usuários podem liberar seus horários." : "Apenas o admin pode liberar horários."}
+                          </span>
+                        </Label>
+                     </div>
+                  </div>
                 </CardContent>
             </Card>
+
             <Card className="shadow-lg">
                 <CardHeader>
-                <CardTitle>Configurar Escala de Oração</CardTitle>
+                    <CardTitle>Gerenciar Escalas</CardTitle>
+                    <CardDescription>
+                        Selecione uma escala abaixo para ver as opções de gerenciamento.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    {allSchedules.length > 0 ? (
+                        <div className="space-y-4">
+                            <div className="space-y-2">
+                                <Label className="font-semibold">Selecione uma escala para gerenciar:</Label>
+                                <Select onValueChange={handleScheduleSelect} value={activeSchedule?.id || ''}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Selecione uma escala" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {allSchedules.map(schedule => (
+                                            <SelectItem key={schedule.id} value={schedule.id}>
+                                                Escala de {format(new Date(schedule.startDate), 'PPP', { locale: ptBR })} à {format(new Date(schedule.endDate), 'PPP', { locale: ptBR })}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            {activeSchedule && (
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4">
+                                     <Button variant="outline" onClick={() => setShowAdminBookings(prev => !prev)}>
+                                        <Pencil className="w-4 h-4 mr-2" />
+                                        {showAdminBookings ? "Ocultar Agendamentos" : "Ver e Editar Agendamentos"}
+                                    </Button>
+                                    <Button variant="secondary" onClick={() => setIsAdminMode(false)}>
+                                      <Eye className="w-4 h-4 mr-2" />
+                                      Ir para a Escala
+                                    </Button>
+                                    <AlertDialog open={isScheduleDeleteDialogOpen} onOpenChange={setIsScheduleDeleteDialogOpen}>
+                                        <AlertDialogTrigger asChild>
+                                            <Button variant="destructive">
+                                                <Trash2 className="w-4 h-4 mr-2" />
+                                                Excluir Escala Inteira
+                                            </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                            <AlertDialogHeader>
+                                                <AlertDialogTitle>Você tem certeza?</AlertDialogTitle>
+                                                <AlertDialogDescription>
+                                                    Esta ação não pode ser desfeita. Isso irá apagar permanentemente a escala de {format(new Date(activeSchedule.startDate), 'PPP', { locale: ptBR })} a {format(new Date(activeSchedule.endDate), 'PPP', { locale: ptBR })} e todos os agendamentos feitos.
+                                                </AlertDialogDescription>
+                                            </AlertDialogHeader>
+                                            <AlertDialogFooter>
+                                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                                <AlertDialogAction onClick={handleDeleteSchedule}>Sim, Excluir</AlertDialogAction>
+                                            </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                    </AlertDialog>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <p className="text-sm text-muted-foreground">Nenhuma escala para gerenciar.</p>
+                    )}
+                </CardContent>
+            </Card>
+
+            <Card className="shadow-lg">
+                <CardHeader>
+                <CardTitle>Criar Nova Escala de Oração</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
                 <div className="space-y-2">
-                    <Label>1. Escolha o Dia da Oração</Label>
-                    <Popover>
-                    <PopoverTrigger asChild>
-                        <Button
-                        variant={'outline'}
-                        className={cn('w-full sm:w-[280px] justify-start text-left font-normal',!scheduleDate && 'text-muted-foreground')}
-                        >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {scheduleDate ? format(new Date(scheduleDate), 'PPP', { locale: ptBR }) : <span>Escolha uma data</span>}
-                        </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0">
-                        <Calendar
-                        mode="single"
-                        selected={scheduleDate}
-                        onSelect={(date) => setScheduleDate(date || undefined)}
-                        initialFocus
-                        locale={ptBR}
-                        />
-                    </PopoverContent>
-                    </Popover>
+                    <Label>1. Escolha o Período da Oração</Label>
+                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                           <Label>Data de Início</Label>
+                            <Popover>
+                                <PopoverTrigger asChild>
+                                   <Button
+                                        id="start-date"
+                                        variant={"outline"}
+                                        className={cn("w-full justify-start text-left font-normal", !scheduleStartDate && "text-muted-foreground")}
+                                    >
+                                        <CalendarIcon className="mr-2 h-4 w-4" />
+                                        {scheduleStartDate ? format(scheduleStartDate, "PPP", { locale: ptBR }) : <span>Escolha uma data</span>}
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                <Calendar
+                                    mode="single"
+                                    selected={scheduleStartDate}
+                                    onSelect={handleStartDateSelect}
+                                    initialFocus
+                                    locale={ptBR}
+                                />
+                                </PopoverContent>
+                            </Popover>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Data de Fim</Label>
+                            <Popover>
+                                <PopoverTrigger asChild>
+                                   <Button
+                                        id="end-date"
+                                        variant={"outline"}
+                                        className={cn("w-full justify-start text-left font-normal", !scheduleEndDate && "text-muted-foreground")}
+                                    >
+                                        <CalendarIcon className="mr-2 h-4 w-4" />
+                                        {scheduleEndDate ? format(scheduleEndDate, "PPP", { locale: ptBR }) : <span>Escolha uma data</span>}
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                <Calendar
+                                    mode="single"
+                                    selected={scheduleEndDate}
+                                    onSelect={setScheduleEndDate}
+                                    initialFocus
+                                    locale={ptBR}
+                                    disabled={{ before: scheduleStartDate }}
+                                />
+                                </PopoverContent>
+                            </Popover>
+                        </div>
+                    </div>
                 </div>
                 <div className="space-y-2">
                     <Label>2. Defina o Intervalo de Horários</Label>
@@ -537,55 +886,27 @@ service cloud.firestore {
                         <span>h</span>
                     </div>
                     </div>
+                     <p className="text-xs text-muted-foreground">O horário de início se aplica ao primeiro dia e o de fim ao último dia da escala. Todos os dias intermediários terão 24h de oração.</p>
                 </div>
                 <div className="space-y-2">
-                    <Label>3. Ações da Escala</Label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <Button onClick={handleAdminConfigSubmit}>
-                        {isScheduleDefined ? "Atualizar Agenda" : "Salvar e Disponibilizar Agenda"}
+                    <Button onClick={handleAdminConfigSubmit} className="w-full">
+                        Criar e Disponibilizar Nova Agenda
                     </Button>
-                    {isScheduleDefined && (
-                        <Button onClick={() => setIsAdminMode(false)} variant="outline" className="bg-green-600 text-white hover:bg-accent hover:text-accent-foreground">
-                            Voltar para Escala
-                        </Button>
-                    )}
-                    {allSlotsBooked && (
+                    {allSlotsBooked && activeSchedule && (
                         <Button onClick={() => { handleSendToWhatsApp(); toast({ title: "Escala Enviada!", description: "A escala foi enviada para o WhatsApp."}); }} className="w-full flex items-center gap-2" variant="outline">
                             <WhatsappIcon className="w-5 h-5" />
                             Reenviar Escala para o WhatsApp
                         </Button>
                     )}
-                    {isScheduleDefined && (
-                        <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-                        <AlertDialogTrigger asChild>
-                            <Button variant="destructive" className="w-full flex items-center gap-2">
-                            <Trash2 className="w-5 h-5" />
-                            Excluir Escala
-                            </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                            <AlertDialogHeader>
-                            <AlertDialogTitle>Você tem certeza?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                                Esta ação não pode ser desfeita. Isso irá apagar permanentemente a escala atual e todos os agendamentos feitos.
-                            </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                            <AlertDialogAction onClick={handleDeleteSchedule}>Sim, Excluir</AlertDialogAction>
-                            </AlertDialogFooter>
-                        </AlertDialogContent>
-                        </AlertDialog>
-                    )}
-                    </div>
                 </div>
                 </CardContent>
             </Card>
-            {isScheduleDefined && bookedSlots.length > 0 && (
+            
+            {activeSchedule && showAdminBookings && bookedSlots.length > 0 && (
                 <Card className="shadow-lg">
                 <CardHeader>
-                    <CardTitle>Gerenciar Agendamentos</CardTitle>
-                    <CardDescription>Edite ou remova os agendamentos feitos pelos membros.</CardDescription>
+                    <CardTitle>Agendamentos da Escala Selecionada</CardTitle>
+                    <CardDescription>Edite ou remova os agendamentos feitos pelos membros para a escala de {format(new Date(activeSchedule.startDate), 'PPP', { locale: ptBR })}.</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <Table>
@@ -617,6 +938,14 @@ service cloud.firestore {
                 </Card>
             )}
             
+            {activeSchedule && showAdminBookings && bookedSlots.length === 0 && (
+                 <Card>
+                    <CardContent className="pt-6">
+                       <p className="text-sm text-muted-foreground text-center">Nenhum horário agendado para esta escala ainda.</p>
+                    </CardContent>
+                </Card>
+            )}
+
             <Dialog open={isEditingDialogOpen} onOpenChange={setIsEditingDialogOpen}>
                 <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
@@ -687,76 +1016,139 @@ service cloud.firestore {
             <CardTitle className="flex items-center justify-between">
             <div className='flex items-center gap-2'>
                 <Clock className="w-6 h-6" />
-                Horários para {scheduleDate ? format(new Date(scheduleDate), 'PPP', { locale: ptBR }) : ''}
+                Horários da Torre de Oração
             </div>
             <Button variant="ghost" size="sm" onClick={handleAdminButtonClick}>
+                <KeyRound className="w-4 h-4 mr-2" />
                 Admin
             </Button>
             </CardTitle>
             <CardDescription>
-             Selecione um dia e um horário para participar da nossa Torre de oração. Clique em um horário disponível para agendar sua vaga na escala de oração.
+                Selecione um horário disponível para agendar sua vaga ou clique em um horário já agendado para liberar.
             </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-            <Popover>
-              <PopoverTrigger asChild>
-                  <Button
-                  variant={'outline'}
-                  className={cn('w-full sm:w-[280px] justify-start text-left font-normal',!scheduleDate && 'text-muted-foreground')}
-                  >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {scheduleDate ? format(new Date(scheduleDate), 'PPP', { locale: ptBR }) : <span>Escolha uma data</span>}
-                  </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0">
-                  <Calendar
-                  mode="single"
-                  selected={scheduleDate}
-                  onSelect={(date) => setScheduleDate(date || undefined)}
-                  initialFocus
-                  locale={ptBR}
-                  />
-              </PopoverContent>
-            </Popover>
-
-            {!isScheduleDefined && (
-                 <div className="space-y-4 text-center">
-                    <Alert variant="destructive" className="shadow-lg bg-red-600 text-white">
-                        <AlertTriangle className="h-4 w-4 text-white" />
-                        <AlertTitle className="text-white">Nenhuma escala definida</AlertTitle>
-                        <AlertDescription className="text-white">
-                            A escala para a Torre de Oração no dia selecionado ainda não foi definida. Por favor, volte mais tarde ou selecione outra data.
-                        </AlertDescription>
-                    </Alert>
-                </div>
+            {!activeSchedule && !isLoading && (
+                <Alert variant="destructive" className="bg-red-600 text-white border-red-600 [&>svg]:text-white">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Nenhuma escala definida</AlertTitle>
+                    <AlertDescription>
+                        Ainda não há uma escala para a Torre de Oração agendada. Por favor, volte mais tarde.
+                    </AlertDescription>
+                </Alert>
             )}
             
-            {isScheduleDefined && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {(slots || []).map((slot) => (
-                    <Button
-                    key={slot.time}
-                    variant={slot.isBooked ? 'destructive' : 'default'}
-                    className={cn('h-20 flex flex-col items-start p-3 transition-all duration-300 ease-in-out transform hover:scale-105 shadow-md font-bold', !slot.isBooked && 'bg-green-600 hover:bg-green-700 text-white')}
-                    onClick={() => handleSelectSlot(slot)}
-                    disabled={slot.isBooked}
-                    >
-                    <div className="text-lg">{slot.time}</div>
-                    <div className="flex items-center gap-1 text-sm mt-1 font-normal">
-                        {slot.isBooked ? (<><User className="w-4 h-4" /><span>{slot.bookedBy}</span></>) : (<><HelpingHand className="w-4 h-4" /><span>Disponível</span></>)}
+            {activeSchedule && (
+              <div className="space-y-6">
+                <div className="p-4 border rounded-lg space-y-4">
+                    <div className="space-y-2">
+                        <Label className="font-semibold">Selecione uma escala para visualizar:</Label>
+                        <Select onValueChange={handleScheduleSelect} value={activeSchedule.id}>
+                            <SelectTrigger>
+                                <SelectValue placeholder="Selecione uma escala" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {allSchedules.map(schedule => (
+                                    <SelectItem key={schedule.id} value={schedule.id}>
+                                        Escala de {format(new Date(schedule.startDate), 'PPP', { locale: ptBR })} à {format(new Date(schedule.endDate), 'PPP', { locale: ptBR })}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
                     </div>
-                    </Button>
-                ))}
+                    <Label className="font-semibold">Filtre por um período específico:</Label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                           <Label>Data de Início</Label>
+                           <Popover>
+                                <PopoverTrigger asChild>
+                                   <Button
+                                        variant={"outline"}
+                                        className={cn("w-full justify-start text-left font-normal", !filterStartDate && "text-muted-foreground")}
+                                    >
+                                        <CalendarIcon className="mr-2 h-4 w-4" />
+                                        {filterStartDate ? format(filterStartDate, "PPP", { locale: ptBR }) : <span>Escolha uma data</span>}
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                <Calendar
+                                    mode="single"
+                                    selected={filterStartDate}
+                                    onSelect={handleFilterStartDateSelect}
+                                    initialFocus
+                                    locale={ptBR}
+                                    disabled={{ before: new Date(activeSchedule.startDate), after: filterEndDate || new Date(activeSchedule.endDate) }}
+                                />
+                                </PopoverContent>
+                            </Popover>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Data de Fim</Label>
+                            <Popover>
+                                <PopoverTrigger asChild>
+                                   <Button
+                                        variant={"outline"}
+                                        className={cn("w-full justify-start text-left font-normal", !filterEndDate && "text-muted-foreground")}
+                                    >
+                                        <CalendarIcon className="mr-2 h-4 w-4" />
+                                        {filterEndDate ? format(filterEndDate, "PPP", { locale: ptBR }) : <span>Escolha uma data</span>}
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                <Calendar
+                                    mode="single"
+                                    selected={filterEndDate}
+                                    onSelect={setFilterEndDate}
+                                    initialFocus
+                                    locale={ptBR}
+                                    disabled={{ before: filterStartDate || new Date(activeSchedule.startDate), after: new Date(activeSchedule.endDate) }}
+                                />
+                                </PopoverContent>
+                            </Popover>
+                        </div>
+                    </div>
                 </div>
+
+                {Object.keys(slotsByDay).length > 0 ? (
+                    Object.entries(slotsByDay).map(([day, daySlots]) => (
+                    <div key={day}>
+                        <h3 className="text-lg font-semibold text-primary mb-3 border-b-2 border-primary/20 pb-2">{day}</h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {daySlots.map((slot) => (
+                            <Button
+                            key={slot.time}
+                            variant={slot.isBooked ? 'destructive' : 'default'}
+                            className={cn('h-20 flex flex-col items-start p-3 transition-all duration-300 ease-in-out transform hover:scale-105 shadow-md font-bold', !slot.isBooked && 'bg-green-600 hover:bg-green-700 text-white')}
+                            onClick={() => handleSelectSlot(slot)}
+                            >
+                            <div className="text-lg">{slot.time.split(' ')[1]}</div>
+                            <div className="flex items-center gap-1 text-sm mt-1 font-normal">
+                                {slot.isBooked ? (<><User className="w-4 h-4" /><span>{slot.bookedBy}</span></>) : (<><HelpingHand className="w-4 h-4" /><span>Disponível</span></>)}
+                            </div>
+                            </Button>
+                        ))}
+                        </div>
+                    </div>
+                    ))
+                ) : (
+                    <Alert>
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTitle>Nenhum horário encontrado</AlertTitle>
+                        <AlertDescription>
+                            Não há horários de oração disponíveis para o período selecionado. Tente alterar as datas do filtro.
+                        </AlertDescription>
+                    </Alert>
+                )}
+              </div>
             )}
         </CardContent>
         </Card>
-        {isScheduleDefined && bookedSlots.length > 0 && (
+        {activeSchedule && bookedSlots.length > 0 && (
         <Card className="shadow-lg">
             <CardHeader>
-            <CardTitle>Escala de Oração do Dia</CardTitle>
+            <CardTitle>Escala de Oração Completa</CardTitle>
             <CardDescription>
-                Abaixo está a lista de irmãos comprometidos com a oração para o dia selecionado.
+                Abaixo está a lista de irmãos comprometidos com a oração.
             </CardDescription>
             </CardHeader>
             <CardContent>
@@ -784,11 +1176,11 @@ service cloud.firestore {
             <DialogHeader>
               <DialogTitle>Agendar Horário de Oração</DialogTitle>
               <DialogDescription>
-                Você está agendando o horário das {selectedSlot?.time}. Por favor, insira seu nome para confirmar.
+                Você está agendando o horário das {selectedSlot?.time}. Por favor, insira seu nome e uma senha de 4 dígitos para confirmar.
               </DialogDescription>
             </DialogHeader>
             <Form {...bookingForm}>
-              <form onSubmit={bookingForm.handleSubmit(handleBookingSubmit)} className="space-y-8 p-4">
+              <form onSubmit={bookingForm.handleSubmit(handleBookingSubmit)} className="space-y-4 p-4">
                 <FormField control={bookingForm.control} name="name"
                   render={({ field }) => (
                     <FormItem>
@@ -800,12 +1192,51 @@ service cloud.firestore {
                     </FormItem>
                   )}
                 />
+                <FormField control={bookingForm.control} name="password"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Senha de 4 dígitos</FormLabel>
+                      <FormControl>
+                        <Input type="password" placeholder="Crie uma senha" {...field} maxLength={4} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <DialogFooter>
                   <Button type="submit" className="bg-green-600 hover:bg-green-700 text-white">Confirmar Agendamento</Button>
                 </DialogFooter>
               </form>
             </Form>
           </DialogContent>
+        </Dialog>
+        <Dialog open={isDeletingDialogOpen} onOpenChange={setIsDeletingDialogOpen}>
+            <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+                <DialogTitle>Liberar Horário</DialogTitle>
+                <DialogDescription>
+                Para liberar o horário de {selectedSlot?.time}, agendado por {selectedSlot?.bookedBy}, por favor, insira a senha cadastrada.
+                </DialogDescription>
+            </DialogHeader>
+            <Form {...deleteBookingForm}>
+                <form onSubmit={deleteBookingForm.handleSubmit(handleDeleteBookingSubmit)} className="space-y-4 p-4">
+                <FormField control={deleteBookingForm.control} name="password"
+                    render={({ field }) => (
+                    <FormItem>
+                        <FormLabel>Senha do Agendamento</FormLabel>
+                        <FormControl>
+                        <Input type="password" placeholder="Digite a senha" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                    </FormItem>
+                    )}
+                />
+                <DialogFooter>
+                    <Button type="submit" variant="destructive">Confirmar e Liberar</Button>
+                </DialogFooter>
+                </form>
+            </Form>
+            </DialogContent>
         </Dialog>
         <Dialog open={isAuthDialogOpen} onOpenChange={setIsAuthDialogOpen}>
             <DialogContent className="sm:max-w-[425px]">
